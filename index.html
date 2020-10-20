@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PostgreSQL Tuple Freezing Demo</title>
+</head>
+<body>
+    <canvas id="canvas" height="720" width="1280"></canvas>
+    <div>
+        <input id="simCheckbox" type="checkbox" />
+        <span>Simulate XID Exhaustion</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("canvas");
+        const simCheckbox = document.getElementById("simCheckbox")
+
+        canvas.width = 720;
+        canvas.height = 480;
+        const centerX = canvas.width * 0.5;
+        const centerY = canvas.height * 0.65;
+        const radius = Math.min(centerX, centerY) * 0.40;
+
+        const ctx = canvas.getContext("2d");
+
+        function xidToRadians(xid) {
+            return (2 * Math.PI) * (xid / 2**32) - (0.5 * Math.PI);
+        }
+
+        function drawPieSlice(colour, startAngle, endAngle) {
+            ctx.fillStyle = colour;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawText(text, x, y, center=false, colour="black") {
+            if (center) {
+                x -= (text.length / 2) * 10;
+            }
+
+            ctx.fillStyle = colour;
+            ctx.font = "bold 20px monospace";
+            ctx.fillText(text, x, y+20);
+        }
+
+        function drawOutlinedRectangle(colour, x, y, w, h) {
+            ctx.fillStyle = colour;
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeStyle = "1px solid black";
+            ctx.strokeRect(x, y, w, h);
+        }
+
+        function drawLegend(x, y) {
+            drawOutlinedRectangle("yellow", x, y, 25, 25)
+            drawText("Used xids since last freeze", x+30, y);
+            drawOutlinedRectangle("green", x, y+25, 25, 25)
+            drawText("Future xids", x+30, y+25);
+            drawOutlinedRectangle("red", x, y+50, 25, 25)
+            drawText("Where the database will stop to prevent wraparound", x+30, y+50);
+            drawOutlinedRectangle("black", x, y+75, 25, 25)
+            drawText("Past xids", x+30, y+75);
+        }
+
+        let txid_current = 0;
+        let datfrozenxid = 0;
+        let isVacuuming = false;
+
+        function animate() {
+            const simulateXIDExhaustion = simCheckbox.checked;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawText("0", centerX, centerY - radius - 25, true);
+            drawText("2^31", centerX, centerY + radius, true);
+            drawText(`txid_current = ${txid_current}`, 5, 5);
+            drawText(`datfrozenxid = ${datfrozenxid}`, 5, 30);
+            if (simulateXIDExhaustion && isVacuuming) {
+                drawText("!!! Database Locked", 5, 55, false, "red");
+            } else {
+                drawText("Database Not Locked", 5, 55, false, "green");
+            }
+            if (isVacuuming) {
+                drawText("Vacuuming", 30*10, 55)
+            } else {
+                drawText("Not Vacuuming", 30*10, 55)
+            }
+            drawLegend(5, 80);
+
+            drawPieSlice("yellow", xidToRadians(datfrozenxid), xidToRadians(txid_current));
+            drawPieSlice("green", xidToRadians(txid_current), xidToRadians(datfrozenxid + 2**31));
+            drawPieSlice("red", xidToRadians(datfrozenxid + 2**31), xidToRadians(txid_current + 2**31));
+            drawPieSlice("black", xidToRadians(txid_current + 2**31), xidToRadians(datfrozenxid));
+
+            if (!isVacuuming || !simulateXIDExhaustion) {
+                txid_current += Math.trunc(Math.random() ** 4 * 16_000_000);
+            }
+            if (!simulateXIDExhaustion && txid_current - datfrozenxid > 200_000_000) {
+                isVacuuming = true;
+            } else if (simulateXIDExhaustion && txid_current - datfrozenxid > 2**31 - 35_000_000) {
+                isVacuuming = true;
+            }
+            if (isVacuuming) {
+                datfrozenxid += 15_000_000;
+                if (txid_current - datfrozenxid < 16_000_000) {
+                    isVacuuming = false;
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
